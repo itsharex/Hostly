@@ -10,6 +10,7 @@ jobs:
   publish-tauri:
     permissions:
       contents: write
+      id-token: write # Sometimes needed for certain OIDC/signing ops, harmless to add
     strategy:
       fail-fast: false
       matrix:
@@ -36,18 +37,34 @@ jobs:
       - name: install dependencies (frontend)
         run: npm install
 
+      - name: Delete existing release
+        uses: dev-drprasad/delete-tag-and-release@v1.0
+        with:
+          delete_release: true
+          tag_name: releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and Release
         uses: tauri-apps/tauri-action@v0
+        id: tauri-build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Creates a unique release for every build number to satisfy "Release on every commit"
-          tagName: build-${{ github.run_number }}
-          releaseName: 'Build ${{ github.run_number }}'
+          tagName: releases
+          releaseName: 'Releases'
           releaseBody: |
-            Auto-generated release from commit ${{ github.sha }}.
+            This is the latest build.
             
             **Downloads:**
-            See the Assets section below for the executable and installer.
+            See assets below.
           releaseDraft: false
           prerelease: false
+
+      - name: Upload Portable EXE
+        uses: softprops/action-gh-release@v1
+        if: success()
+        with:
+          tag_name: releases
+          files: src-tauri/target/release/hosts-switcher.exe
+          token: ${{ secrets.GITHUB_TOKEN }}

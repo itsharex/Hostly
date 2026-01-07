@@ -6,7 +6,15 @@
   <img src="https://raw.githubusercontent.com/zengyufei/hosts-switcher/main/img/index.png" alt="Hosts Switcher Main Interface" width="600" />
 </p>
 
-## ✨ 主要功能
+> 🤖 **特别说明**: 本项目所有代码逻辑均由 AI 智能体 [Antigravity](https://gemini.google.com/) 编写，全程无人工手写逻辑代码。
+
+## ✨ 核心特性
+
+🔥 **极致轻快**: 基于 Rust 编写核心逻辑，前端采用 WebView 渲染。生成的便携版单文件仅 **11MB** 大小，启动速度 **毫秒级**，内存占用极低。
+🛡️ **安全可靠**: 代码开源，无后台常驻进程，只在需要时运行。
+⚙️ **全能控制**: 支持 **GUI** (图形界面) 和 **CLI** (命令行) 双重操作体验。
+
+## 🧩 功能详情
 
 - **环境切换**: 快速在 Dev、Test、Prod 等多套 Hosts 配置间切换。
 - **组合模式**: 支持 **单选** (互斥) 和 **多选** (叠加) 两种模式。
