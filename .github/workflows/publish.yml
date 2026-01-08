@@ -28,7 +28,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest, macos-13, macos-14] # Windows, macOS Intel, macOS Apple Silicon
+        include:
+          - platform: "macos-latest"
+            args: "--target aarch64-apple-darwin"
+          - platform: "macos-latest"
+            args: "--target x86_64-apple-darwin"
+          - platform: "macos-latest"
+            args: "--target universal-apple-darwin"
+          - platform: "ubuntu-22.04"
+            args: ""
+          - platform: "ubuntu-24.04-arm"
+            args: ""
+          - platform: "windows-latest"
+            args: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -51,7 +63,11 @@ jobs:
       - name: install dependencies (frontend)
         run: npm install
 
-      - name: Build and Release
+      - name: install UPX
+        if: matrix.platform == 'windows-latest'
+        run: choco install upx
+
+      - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         id: tauri-build
         env:
@@ -78,6 +94,12 @@ jobs:
             (Assuming you moved the app to the Applications folder / 假设您已将应用移动到了应用程序文件夹)
           releaseDraft: false
           prerelease: false
+
+      - name: UPX Compress (Windows only)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          upx --ultra --best src-tauri/target/release/hosts-switcher.exe
 
       - name: Upload Portable EXE (Windows only)
         uses: softprops/action-gh-release@v1

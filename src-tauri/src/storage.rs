@@ -121,7 +121,8 @@ pub fn load_common_config(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn save_common_config(app: AppHandle, content: String) -> Result<(), String> {
     let path = get_common_path(&app)?;
-    fs::write(path, content).map_err(|e| e.to_string())
+    fs::write(path, content).map_err(|e| e.to_string())?;
+    apply_config(app)
 }
 
 #[tauri::command]
@@ -153,9 +154,14 @@ pub fn list_profiles(app: AppHandle) -> Result<Vec<ProfileData>, String> {
 #[tauri::command]
 pub fn create_profile(app: AppHandle, name: String, content: Option<String>) -> Result<String, String> {
     let mut config = load_config(app.clone())?;
-    let id = Uuid::new_v4().to_string();
     
-    let initial_content = content.unwrap_or_else(|| "# New Environment\n".to_string());
+    // Check for duplicate name
+    if config.profiles.iter().any(|p| p.name == name) {
+        return Err("环境名称已存在 / Profile name already exists".to_string());
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let initial_content = content.unwrap_or_default();
     save_profile_file(&app, &id, &initial_content)?;
     
     config.profiles.push(ProfileMetadata {
@@ -170,7 +176,14 @@ pub fn create_profile(app: AppHandle, name: String, content: Option<String>) -> 
 
 #[tauri::command]
 pub fn save_profile_content(app: AppHandle, id: String, content: String) -> Result<(), String> {
-    save_profile_file(&app, &id, &content)
+    save_profile_file(&app, &id, &content)?;
+    
+    // If this profile is active, re-apply config to system hosts
+    let config = load_config(app.clone())?;
+    if config.profiles.iter().any(|p| p.id == id && p.active) {
+        apply_config(app)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -196,6 +209,12 @@ pub fn delete_profile(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn rename_profile(app: AppHandle, id: String, new_name: String) -> Result<(), String> {
     let mut config = load_config(app.clone())?;
+    
+    // Check for duplicate name (excluding itself)
+    if config.profiles.iter().any(|p| p.name == new_name && p.id != id) {
+        return Err("环境名称已存在 / Profile name already exists".to_string());
+    }
+
     if let Some(idx) = config.profiles.iter().position(|p| p.id == id) {
         config.profiles[idx].name = new_name;
         save_config_internal(&app, &config)?;

@@ -1,14 +1,98 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + Vue + Typescript App</title>
-  </head>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hosts Switcher</title>
+    <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+    <!-- ... same body ... -->
+    <div id="app" class="mica">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>Hosts Switcher</h2>
+            </div>
+            
+            <div class="sidebar-sections">
+                <div class="sidebar-section">
+                    <div class="section-header">
+                        <div class="header-title">系统 & 公共</div>
+                    </div>
+                    <ul id="fixed-list" class="profile-ul">
+                        <li data-id="system" class="profile-item">
+                            <span class="status-dot"></span>
+                            <span class="name">系统 Hosts (只读)</span>
+                        </li>
+                        <li data-id="common" class="profile-item">
+                            <span class="status-dot"></span>
+                            <span class="name">公共配置 (Common)</span>
+                        </li>
+                    </ul>
+                </div>
+                
+                <div class="sidebar-section">
+                    <div class="section-header">
+                        <div class="header-title">环境配置</div>
+                        <button id="add-profile-btn" class="icon-btn-small" title="新建环境">+</button>
+                    </div>
+                    <ul id="profile-list" class="profile-ul">
+                        <!-- 动态渲染 -->
+                    </ul>
+                </div>
+            </div>
 
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+            <div class="sidebar-footer">
+                <!-- 多选模式切换 -->
+                <div class="mode-switch">
+                    <span class="mode-label">单选</span>
+                    <label class="switch">
+                        <input type="checkbox" id="multi-select-toggle">
+                        <span class="slider round"></span>
+                    </label>
+                    <span class="mode-label">多选</span>
+                </div>
+                <div class="footer-actions">
+                    <button id="import-btn" class="footer-text-btn">导入</button>
+                    <button id="export-btn" class="footer-text-btn">导出</button>
+                    <button id="refresh-btn" class="footer-text-btn">刷新</button>
+                </div>
+            </div>
+        </aside>
+
+        <main class="editor-area">
+            <div class="editor-header">
+                <div class="current-info">
+                   <h3 id="current-profile-name">请选择配置</h3>
+                   <span id="current-profile-id" class="hidden"></span>
+                </div>
+                <div class="header-right">
+                    <button id="rename-btn" class="hidden">重命名</button>
+                    <button id="system-edit-btn" class="secondary hidden">编辑系统文件</button>
+                    <button id="save-btn" class="primary hidden">保存</button>
+                </div>
+            </div>
+            <div class="editor-container">
+                <textarea id="editor" spellcheck="false" placeholder="请输入内容"></textarea>
+            </div>
+        </main>
+    </div>
+
+    <!-- 弹窗 -->
+    <div id="modal-overlay" class="hidden">
+        <div class="modal">
+            <h4 id="modal-title">标题</h4>
+            <input type="text" id="modal-input" placeholder="请输入...">
+            <div class="modal-buttons">
+                <button id="modal-cancel">取消</button>
+                <button id="modal-confirm" class="primary">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 容器 -->
+    <div id="toast-container"></div>
+
+    <script src="/src/main.js" type="module"></script>
+</body>
 </html>
