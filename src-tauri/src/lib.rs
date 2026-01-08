@@ -2,6 +2,11 @@ mod hosts;
 pub mod storage;
 pub mod cli;
 
+#[cfg(target_os = "windows")]
+use tauri::Manager;
+#[cfg(target_os = "windows")]
+use window_vibrancy::apply_mica;
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
