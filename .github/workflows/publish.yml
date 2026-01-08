@@ -25,6 +25,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: releases
+          name: Releases
+          body: "Latest build for all platforms."
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   publish-tauri:
     needs: cleanup
     permissions:
