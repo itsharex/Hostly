@@ -60,6 +60,15 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: install Rust target
+        run: |
+          if [[ "${{ matrix.args }}" == *"universal-apple-darwin"* ]]; then
+            rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          elif [[ "${{ matrix.args }}" == *"--target"* ]]; then
+            TARGET=$(echo "${{ matrix.args }}" | grep -oP '(?<=--target )[^ ]+')
+            rustup target add $TARGET
+          fi
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
@@ -107,7 +116,15 @@ jobs:
           prerelease: false
 
       - name: Build Hostly-Core (Standalone CLI)
-        run: cargo build --release --bin hostly-core ${{ matrix.args }}
+        run: |
+          if [[ "${{ matrix.args }}" == *"universal-apple-darwin"* ]]; then
+            cargo build --release --bin hostly-core --target x86_64-apple-darwin
+            cargo build --release --bin hostly-core --target aarch64-apple-darwin
+            mkdir -p src-tauri/target/universal-apple-darwin/release
+            lipo -create src-tauri/target/x86_64-apple-darwin/release/hostly-core src-tauri/target/aarch64-apple-darwin/release/hostly-core -output src-tauri/target/universal-apple-darwin/release/hostly-core
+          else
+            cargo build --release --bin hostly-core ${{ matrix.args }}
+          fi
         working-directory: src-tauri
 
       - name: Prepare Hostly-Core Path (Unix)
