@@ -2,6 +2,11 @@ name: Publish
 
 on:
   push:
+    paths:
+      - '**/*'
+      - '!.github/workflows/**'
+      - '!README.md'
+      - '!LICENSE'
     branches:
       - main
   workflow_dispatch:
