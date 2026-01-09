@@ -20,8 +20,65 @@ pub fn get_system_hosts() -> Result<String, String> {
 #[tauri::command]
 pub fn save_system_hosts(content: String) -> Result<(), String> {
     let path = get_hosts_path();
-    // Start with a backup? Maybe later. For now, KISS.
-    fs::write(&path, content).map_err(|e| e.to_string())
+    
+    // Attempt normal write first
+    match fs::write(&path, &content) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            #[cfg(target_os = "macos")]
+            {
+                let direct_err = e.to_string();
+                println!("Direct write failed: {}. Attempting elevation...", direct_err);
+                
+                // Try elevation
+                match save_hosts_elevated_macos(&content) {
+                    Ok(_) => Ok(()),
+                    Err(elevated_err) => {
+                        // Return BOTH errors so we know what happened
+                        Err(format!("Save failed. Direct: [{}]. Elevated: [{}]", direct_err, elevated_err))
+                    }
+                }
+            }
+            
+            #[cfg(not(target_os = "macos"))]
+            Err(e.to_string())
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn save_hosts_elevated_macos(content: &str) -> Result<(), String> {
+    use std::io::Write;
+    
+    // Create a temporary file
+    let mut temp_file = match tempfile::NamedTempFile::new() {
+        Ok(t) => t,
+        Err(e) => return Err(format!("TempFile creation failed: {}", e)),
+    };
+    
+    if let Err(e) = write!(temp_file, "{}", content) {
+        return Err(format!("TempFile write failed: {}", e));
+    }
+    
+    let temp_path = temp_file.path().to_string_lossy().to_string();
+
+    // Move temp file to /etc/hosts using authentication
+    let script = format!(
+        "do shell script \"mv -f '{}' /etc/hosts && chmod 644 /etc/hosts\" with administrator privileges",
+        temp_path
+    );
+
+    let output = std::process::Command::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| format!("Osascript spawn failed: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("Elevation script failed (code {:?}): {}", output.status.code(), String::from_utf8_lossy(&output.stderr)))
+    }
 }
 
 #[tauri::command]

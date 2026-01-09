@@ -42,44 +42,6 @@ fn check_admin_and_relaunch() {
              }
          }
     }
-
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    {
-        let is_root = std::process::Command::new("id")
-            .arg("-u")
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
-            .unwrap_or(false);
-
-        if !is_root {
-            #[cfg(target_os = "macos")]
-            {
-                println!("Not running as root, attempting to relaunch with osascript...");
-                let current_exe = std::env::current_exe().unwrap();
-                let args: Vec<String> = std::env::args().skip(1).collect();
-                let args_str = args.iter().map(|arg| {
-                    if arg.contains(' ') { format!("'{}'", arg) } else { arg.to_string() }
-                }).collect::<Vec<String>>().join(" ");
-
-                let script = format!(
-                    "do shell script \"'{}' {} &> /dev/null &\" with administrator privileges",
-                    current_exe.display(),
-                    args_str
-                );
-
-                if let Ok(s) = std::process::Command::new("osascript").arg("-e").arg(script).status() {
-                    if s.success() {
-                        std::process::exit(0);
-                    }
-                }
-            }
-
-            #[cfg(target_os = "linux")]
-            {
-                println!("Error: Modifying hosts requires root privileges. Please run with sudo.");
-            }
-        }
-    }
 }
 
 fn main() {

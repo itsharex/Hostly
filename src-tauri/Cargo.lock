@@ -1418,6 +1418,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
+ "tempfile",
  "uuid",
  "window-vibrancy 0.7.1",
 ]
