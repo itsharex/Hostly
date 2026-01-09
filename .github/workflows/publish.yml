@@ -84,11 +84,6 @@ jobs:
             rustup target add $TARGET
           fi
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: 'src-tauri'
-
       - name: install dependencies (frontend)
         run: npm install
 
