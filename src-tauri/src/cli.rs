@@ -84,6 +84,12 @@ enum Commands {
         /// Force multi-mode if needed (during open)
         #[arg(long, short)]
         multi: bool,
+    },
+    /// Migrate from SwitchHosts
+    Migration {
+        /// SwitchHosts backup file path (json)
+        #[arg(long, short, required = true)]
+        target: String,
     }
 }
 
@@ -302,7 +308,30 @@ pub fn run_cli(app: Option<&AppHandle>) -> bool {
                       eprintln!("Warning: Cannot open profile '{}' (not found).", p_name);
                  }
              }
+             }
              let _ = storage::apply_config_internal(&ctx);
+        },
+        Some(Commands::Migration { target }) => {
+             let path = PathBuf::from(&target);
+             if !path.exists() {
+                 eprintln!("Target file '{}' not found.", target);
+                 return true;
+             }
+
+             let content = match fs::read_to_string(&path) {
+                 Ok(c) => c,
+                 Err(e) => {
+                      eprintln!("Failed to read file: {}", e);
+                      return true;
+                 }
+             };
+
+             if let Ok(count) = storage::import_switchhosts_internal(&ctx, content) {
+                 println!("Successfully migrated {} profiles from SwitchHosts backup '{}'", count, target);
+                 let _ = storage::apply_config_internal(&ctx);
+             } else {
+                 eprintln!("Migration failed. Please check if the file is a valid SwitchHosts JSON backup.");
+             }
         },
         None => return false // No subcommand, run GUI
     }
