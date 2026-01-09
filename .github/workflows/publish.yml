@@ -57,6 +57,9 @@ jobs:
             args: ""
           - platform: "windows-latest"
             args: ""
+          - platform: "windows-latest"
+            args: ""
+            no_elevation: true
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -100,6 +103,7 @@ jobs:
         run: choco install upx
 
       - name: Build Tauri App
+        if: matrix.no_elevation != true
         uses: tauri-apps/tauri-action@v0
         id: tauri-build
         env:
@@ -128,6 +132,7 @@ jobs:
           prerelease: false
 
       - name: Build Hostly-Core (Standalone CLI)
+        if: matrix.no_elevation != true
         shell: bash
         run: |
           if [[ "${{ matrix.args }}" == *"universal-apple-darwin"* ]]; then
@@ -139,6 +144,23 @@ jobs:
             cargo build --release --bin hostly-core ${{ matrix.args }}
           fi
         working-directory: src-tauri
+
+      - name: Build Tauri App (No Elevation)
+        if: matrix.no_elevation == true
+        shell: pwsh
+        run: |
+          npm run tauri -- build -- --no-default-features
+          cp src-tauri/target/release/hostly.exe hostly-off-elevation.exe
+          upx --best hostly-off-elevation.exe
+
+      - name: Upload No-Elevation Artifact
+        if: matrix.no_elevation == true
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: releases
+          files: hostly-off-elevation.exe
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
 
       - name: Prepare Hostly-Core Path (Unix)
         if: matrix.platform != 'windows-latest'

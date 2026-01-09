@@ -6,7 +6,7 @@
 
 
 fn check_admin_and_relaunch() {
-    #[cfg(target_os = "windows")]
+    #[cfg(all(target_os = "windows", feature = "auto-elevation"))]
     {
          let output = std::process::Command::new("net")
             .arg("session")
@@ -62,7 +62,7 @@ fn check_admin_and_relaunch() {
                 }).collect::<Vec<String>>().join(" ");
 
                 let script = format!(
-                    "do shell script \"'{}' {}\" with administrator privileges",
+                    "do shell script \"'{}' {} &> /dev/null &\" with administrator privileges",
                     current_exe.display(),
                     args_str
                 );

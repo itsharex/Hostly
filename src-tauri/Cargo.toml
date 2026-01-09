@@ -6,6 +6,11 @@ authors = ["you"]
 edition = "2021"
 default-run = "hostly"
 
+
+[features]
+default = ["auto-elevation"]
+auto-elevation = []
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
