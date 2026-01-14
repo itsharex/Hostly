@@ -42,6 +42,8 @@ uuid = { version = "1.19.0", features = ["v4", "fast-rng", "macro-diagnostics"] 
 chrono = "0.4.42"
 clap = { version = "4.5.54", features = ["derive"] }
 tempfile = "3.24.0"
+minreq = { version = "2.13.2", features = ["https"] }
+tokio = { version = "1", features = ["time", "rt-multi-thread", "macros"] }
 
 [profile.release]
 opt-level = "z"     # Optimize for size

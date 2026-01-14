@@ -29,6 +29,14 @@ const importSwitchHostsBtn = document.getElementById('import-switchhosts-btn');
 const exportBtn = document.getElementById('export-btn');
 const refreshBtn = document.getElementById('refresh-btn');
 const systemEditBtn = document.getElementById('system-edit-btn');
+const settingsBtn = document.getElementById('settings-btn');
+const settingsModalOverlay = document.getElementById('settings-modal-overlay');
+const settingsCloseBtn = document.getElementById('settings-close-btn');
+
+// Status Bar
+const remoteStatusBar = document.getElementById('remote-status-bar');
+const lastUpdateTimeEl = document.getElementById('last-update-time');
+const nextUpdateTimeEl = document.getElementById('next-update-time');
 
 // Modal Logic
 const modalOverlay = document.getElementById('modal-overlay');
@@ -36,15 +44,67 @@ const modalTitle = document.getElementById('modal-title');
 const modalInput = document.getElementById('modal-input');
 const modalConfirm = document.getElementById('modal-confirm');
 const modalCancel = document.getElementById('modal-cancel');
+// New Fields
+const modalUrl = document.getElementById('modal-url');
+const autoUpdateFields = document.getElementById('auto-update-fields');
+const modalIntervalValue = document.getElementById('modal-interval-value');
+const modalIntervalUnit = document.getElementById('modal-interval-unit');
+const remoteFields = document.getElementById('remote-fields');
+const typeRadios = document.getElementsByName('profile-type');
+const updateModeRadios = document.getElementsByName('update-mode');
+
 let modalCallback = null;
 
-function showPrompt(title, defaultValue, callback) {
+
+function showPrompt(title, initialData, callback) {
     modalTitle.innerText = title;
-    modalInput.value = defaultValue || '';
+    
+    // Handle simple string (legacy) or object
+    const data = typeof initialData === 'object' ? initialData : { name: initialData || '' };
+    
+    modalInput.value = data.name || '';
+    
+    // Reset or Fill extended fields
+    if (data.isRemote) {
+        typeRadios[1].checked = true; // Remote
+        remoteFields.classList.remove('hidden');
+        modalUrl.value = data.url || '';
+        
+        if (data.updateInterval) {
+             updateModeRadios[1].checked = true; // Auto
+             autoUpdateFields.classList.remove('hidden');
+             
+             // Convert seconds to best unit
+             let sec = data.updateInterval;
+             let unit = 1;
+             if (sec % 86400 === 0) unit = 86400;
+             else if (sec % 3600 === 0) unit = 3600;
+             else if (sec % 60 === 0) unit = 60;
+             
+             modalIntervalUnit.value = unit.toString();
+             modalIntervalValue.value = (sec / unit).toString();
+        } else {
+             updateModeRadios[0].checked = true; // Manual
+             autoUpdateFields.classList.add('hidden');
+             modalIntervalValue.value = '1';
+             modalIntervalUnit.value = '3600';
+        }
+    } else {
+        // Local Default
+        typeRadios[0].checked = true; // Local
+        remoteFields.classList.add('hidden');
+        modalUrl.value = '';
+        updateModeRadios[0].checked = true;
+        autoUpdateFields.classList.add('hidden');
+        modalIntervalValue.value = '1';
+        modalIntervalUnit.value = '3600';
+    }
+
     modalOverlay.classList.remove('hidden');
     modalInput.focus();
     modalCallback = callback;
 }
+
 
 modalInput.onkeydown = (e) => {
     if (e.key === 'Enter') {
@@ -55,10 +115,47 @@ modalInput.onkeydown = (e) => {
 };
 
 modalConfirm.onclick = () => {
-    console.log('Modal Confirm Clicked, value:', modalInput.value);
-    if (modalCallback) modalCallback(modalInput.value);
+    const name = modalInput.value;
+    const isRemote = typeRadios[1].checked;
+    const url = modalUrl.value;
+    
+    let interval = 0;
+    if (updateModeRadios[1].checked) { // Auto
+        const val = parseInt(modalIntervalValue.value, 10) || 0;
+        const unit = parseInt(modalIntervalUnit.value, 10) || 1;
+        interval = val * unit;
+    }
+    
+    console.log('Modal Confirm:', { name, isRemote, url, interval });
+    
+    if (modalCallback) {
+        modalCallback({ name, isRemote, url, interval });
+    }
     modalOverlay.classList.add('hidden');
 };
+
+// Type Toggle Logic
+typeRadios.forEach(radio => {
+    radio.onchange = () => {
+        if (radio.value === 'remote') {
+            remoteFields.classList.remove('hidden');
+        } else {
+            remoteFields.classList.add('hidden');
+        }
+    };
+});
+
+// Update Mode Toggle Logic
+updateModeRadios.forEach(radio => {
+    radio.onchange = () => {
+        if (radio.value === 'auto') {
+            autoUpdateFields.classList.remove('hidden');
+        } else {
+            autoUpdateFields.classList.add('hidden');
+        }
+    };
+});
+
 
 modalCancel.onclick = () => {
     modalOverlay.classList.add('hidden');
@@ -129,10 +226,13 @@ function renderList() {
         li.dataset.id = p.id;
         li.innerHTML = `
             <span class="status-dot"></span>
-            <span class="name">${p.name}</span>
+            <span class="name">
+                ${p.url ? '☁️' : ''}${p.name}
+            </span>
             <div class="row-actions">
-                <span class="toggle-row-btn" title="${p.active ? '禁用' : '启用'}">${p.active ? '禁用' : '启用'}</span>
-                <span class="delete-row-btn" title="删除">🗑️</span>
+                <span class="toggle-row-btn" title="${p.active ? '禁用' : '启用'}">${p.active ? '禁' : '启'}</span>
+                ${p.url ? '<span class="update-row-btn" title="立即更新">刷</span>' : '<span class="blank-btn"></span>'}
+                <span class="delete-row-btn" title="删除">删</span>
             </div>
         `;
         
@@ -142,6 +242,9 @@ function renderList() {
             } else if (e.target.classList.contains('toggle-row-btn')) {
                 e.stopPropagation();
                 toggleProfile(p.id);
+            } else if (e.target.classList.contains('update-row-btn')) {
+                e.stopPropagation();
+                updateRemoteProfile(p.id, p.name);
             } else {
                 selectProfile(p.id);
             }
@@ -153,26 +256,191 @@ function renderList() {
     });
 }
 
+async function updateRemoteProfile(id, name) {
+    const confirmed = await ask(`更新会覆盖现有配置 "${name}"，是否继续？`, {
+        title: '更新确认',
+        kind: 'info',
+    });
+    if (confirmed) {
+        showToast(`正在更新 "${name}"...`, 'info');
+        try {
+            await invoke('trigger_profile_update', { id });
+            await loadData();
+            // If currently selected, refresh editor content
+            if (currentProfileId === id) {
+                selectProfile(id);
+            }
+            showToast('更新成功', 'success');
+        } catch (e) {
+            console.error(e);
+            showToast(`更新失败: ${e}`, 'error');
+        }
+    }
+}
+
+
+let statusBarTimer = null;
+let lastAutoRefreshTime = 0;
+
+function updateStatusBar(p) {
+    if (p && p.url) {
+        remoteStatusBar.classList.remove('hidden');
+        
+        const updateText = () => {
+             // Last Update: Only update if timestamp changed to define DOM
+             // This prevents re-creating DOM every second, which would kill hover state.
+             const currentLastTs = p.last_update || 'never';
+             if (lastUpdateTimeEl.dataset.ts !== currentLastTs) {
+                 lastUpdateTimeEl.dataset.ts = currentLastTs;
+                 
+                 const labelSpan = document.createElement('span');
+                 labelSpan.className = 'refresh-action';
+                 labelSpan.innerText = '上次刷新';
+                 labelSpan.onmouseenter = () => labelSpan.innerText = '马上刷新';
+                 labelSpan.onmouseleave = () => labelSpan.innerText = '上次刷新';
+                 labelSpan.onclick = () => manualRefreshRemote(p.id);
+                 
+                 let timeText = '从未';
+                 if (p.last_update) {
+                     timeText = formatDate(new Date(p.last_update));
+                 }
+                 
+                 lastUpdateTimeEl.innerHTML = '';
+                 lastUpdateTimeEl.appendChild(labelSpan);
+                 lastUpdateTimeEl.appendChild(document.createTextNode(`：${timeText}`));
+             }
+            
+            // Next Update
+            let nextText = '';
+            if (p.update_interval && p.update_interval > 0) {
+                 let lastTime = p.last_update ? new Date(p.last_update) : null;
+                 if (lastTime) {
+                    const nextTime = new Date(lastTime.getTime() + p.update_interval * 1000);
+                    // Check if overdue?
+                    const now = new Date();
+                    const diff =  nextTime - now;
+                    
+                    if (diff <= 1000) { // If <= 1s remaining
+                         nextText = '正在更新...';
+                         // Trigger check
+                         const nowTs = Date.now();
+                         if (nowTs - lastAutoRefreshTime > 2000) {
+                             lastAutoRefreshTime = nowTs;
+                             // Call loadData silently (no spinner on refresh button, but effective)
+                             loadData();
+                         }
+                    } else {
+                         nextText = `下次刷新：${formatDate(nextTime)} (还有 ${Math.floor(diff/1000)}秒)`;
+                    }
+                } else {
+                    nextText = '下次刷新：即将进行';
+                }
+            } else {
+                nextText = '自动刷新：未开启';
+            }
+            nextUpdateTimeEl.innerText = nextText;
+        };
+        
+        updateText();
+    } else {
+        remoteStatusBar.classList.add('hidden');
+    }
+}
+
+async function manualRefreshRemote(id) {
+    if (!id) return;
+    showToast('正在刷新...', 'info');
+    try {
+        await invoke('trigger_profile_update', { id });
+        await loadData();
+        // Force status bar update immediately with new data
+        const p = profileMetadata.find(x => x.id === id);
+        if (p) updateStatusBar(p);
+        
+        if (currentProfileId === id) {
+             // Refresh editor content
+             selectProfile(id);
+        }
+        showToast('刷新成功', 'success');
+    } catch (e) {
+        showToast(`刷新失败: ${e}`, 'error');
+    }
+}
+
+function startStatusBarTimer(id) {
+    if (statusBarTimer) clearInterval(statusBarTimer);
+    statusBarTimer = null;
+    
+    if (!id || id === 'system' || id === 'common') {
+        remoteStatusBar.classList.add('hidden');
+        return;
+    }
+    
+    // Check if remote
+    const p = profileMetadata.find(x => x.id === id);
+    if (p && p.url) {
+        // Update immediately
+        updateStatusBar(p);
+        // Start timer
+        statusBarTimer = setInterval(() => {
+             // vital: re-find profile to get latest last_update if it changed
+             const currentP = profileMetadata.find(x => x.id === id);
+             if (currentP) updateStatusBar(currentP);
+        }, 1000);
+    } else {
+        remoteStatusBar.classList.add('hidden');
+    }
+}
+
+function formatDate(date) {
+    const pad = (n) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 async function selectProfile(id) {
     currentProfileId = id;
     renameBtn.classList.add('hidden');
     systemEditBtn.classList.add('hidden');
     systemEditBtn.innerText = '编辑';
     
+    // Reset Title Events
+    currentNameDisplay.onmouseenter = null;
+    currentNameDisplay.onmouseleave = null;
+    currentNameDisplay.onclick = null;
+    currentNameDisplay.classList.remove('exportable-title');
+    currentNameDisplay.title = '';
+    currentNameDisplay.style.color = '';
+
+    const setupExportTitle = (name) => {
+        currentNameDisplay.classList.add('exportable-title');
+        currentNameDisplay.title = '点击导出此配置';
+        currentNameDisplay.onmouseenter = () => {
+             currentNameDisplay.innerText = `导出 ${name}`;
+        }
+        currentNameDisplay.onmouseleave = () => {
+             currentNameDisplay.innerText = name;
+        }
+        currentNameDisplay.onclick = exportCurrentProfile;
+    };
+
     if (id === 'system') {
-        currentNameDisplay.innerText = '系统 Hosts (只读)';
+        const displayName = '系统 Hosts (只读)';
+        currentNameDisplay.innerText = displayName;
         editor.readOnly = true;
         saveBtn.classList.add('hidden');
         systemEditBtn.classList.remove('hidden');
+        setupExportTitle(displayName);
         try {
             systemHosts = await invoke('get_system_hosts');
             editor.value = systemHosts;
         } catch (e) { console.error(e); }
     } else if (id === 'common') {
-        currentNameDisplay.innerText = '公共配置 (Common)';
+        const displayName = '公共配置 (Common)';
+        currentNameDisplay.innerText = displayName;
         editor.readOnly = false;
         saveBtn.classList.remove('hidden');
         editor.value = commonConfig;
+        setupExportTitle(displayName);
     } else {
         const p = profileMetadata.find(x => x.id === id);
         if (p) {
@@ -180,13 +448,20 @@ async function selectProfile(id) {
             editor.readOnly = false;
             saveBtn.classList.remove('hidden');
             renameBtn.classList.remove('hidden');
+            
+            setupExportTitle(p.name);
+
             try {
                 // We use list_profiles to get content since get_profile_content doesn't exist
                 const all = await invoke('list_profiles');
                 const match = all.find(x => x.id === id);
                 if (match) editor.value = match.content;
             } catch (e) { console.error(e); }
+            startStatusBarTimer(id);
         }
+    }
+    if (id === 'system' || id === 'common') {
+        startStatusBarTimer(null); // Stop timer and hide bar
     }
     // Update active class for fixed list
     document.querySelectorAll('#fixed-list .profile-item').forEach(li => {
@@ -258,15 +533,45 @@ async function toggleProfile(id) {
     }
 }
 
-async function createProfile(name) {
-    console.log('Creating profile:', name);
+async function createProfile(data) {
+    // data is now an object: { name, isRemote, url, interval } or just string if legacy (but we updated showPrompt)
+    let name = data;
+    let extra = {};
+    if (typeof data === 'object') {
+        name = data.name;
+        extra = data;
+    }
+    
+    console.log('Creating profile:', name, extra);
     if (!name) return;
     try {
-        const id = await invoke('create_profile', { name });
+        let args = { name };
+        if (extra.isRemote && extra.url) {
+            args.url = extra.url;
+            // args.updateInterval = extra.interval; // Tauri expects snake_case for rust args usually? 
+            // Tauri 2.0 with rename_all="camelCase" is default? No, default is camelCase for JS -> snake_case for Rust variables?
+            // Actually Tauri maps JS object keys to Rust arg names. Rust args are snake_case.
+            // Tauri by default converts camelCase to snake_case.
+            args.updateInterval = extra.interval; 
+        }
+
+        const id = await invoke('create_profile', args); 
+        
+        if (extra.isRemote && extra.url) {
+             showToast('正在下载远程配置...', 'info');
+             try {
+                 await invoke('trigger_profile_update', { id });
+                 showToast('远程配置下载成功', 'success');
+             } catch (e) {
+                 console.error('Download failed:', e);
+                 showToast(`下载失败: ${e}`, 'error');
+             }
+        }
+
         console.log('Profile created, ID:', id);
         await loadData();
         selectProfile(id);
-        showToast('创建成功', 'success');
+        showToast('创建成功 (部分加载中)', 'success');
     } catch (e) {
         console.error('Create profile error:', e);
         showToast(`创建失败: ${e}`, 'error');
@@ -294,20 +599,65 @@ async function deleteProfile(id, name) {
     }
 }
 
-async function renameProfile() {
+async function editProfile() {
     if (!currentProfileId || currentProfileId === 'system' || currentProfileId === 'common') return;
     const p = profileMetadata.find(x => x.id === currentProfileId);
     if (!p) return;
     
-    showPrompt('重命名配置', p.name, async (newName) => {
-        if (!newName || newName === p.name) return;
+    // Preparation for showPrompt
+    const initialData = {
+        name: p.name,
+        isRemote: !!p.url, // If has URL, assume remote type logic
+        url: p.url,
+        updateInterval: p.update_interval
+    };
+    
+    showPrompt('修改配置', initialData, async (newData) => {
+        // newData: { name, isRemote, url, interval }
         try {
-           await invoke('rename_profile', { id: p.id, newName });
-           await loadData();
-           currentNameDisplay.innerText = newName;
-           showToast('重命名成功', 'success');
+            // 1. Rename if changed
+            if (newData.name && newData.name !== p.name) {
+                 await invoke('rename_profile', { id: p.id, newName: newData.name });
+            }
+            
+            // 2. Update Remote Config
+            // Determine new URL and Interval
+            let newUrl = null;
+            let newInterval = null;
+            
+            if (newData.isRemote) {
+                newUrl = newData.url;
+                // If interval > 0, set it. Otherwise None.
+                if (newData.interval > 0) newInterval = newData.interval;
+            }
+            
+            // Call backend to update metadata
+            // Note: If switching Local -> Remote, or Remote -> Local (url=null), this handles it.
+            await invoke('update_remote_config', { 
+                id: p.id, 
+                url: newUrl, 
+                updateInterval: newInterval 
+            });
+            
+            await loadData();
+            currentNameDisplay.innerText = newData.name;
+            showToast('配置已更新', 'success');
+            
+            // If it became remote and has URL, ask to update content? 
+            // Or just let user click update button?
+            // User might expect "Save" to apply new URL content immediately? 
+            // Let's being conservative: if URL changed, trigger update.
+            if (newData.isRemote && newData.url && newData.url !== p.url) {
+                // Trigger download
+                 showToast('正在下载新地址内容...', 'info');
+                 await invoke('trigger_profile_update', { id: p.id });
+                 showToast('内容已更新', 'success');
+                 if (currentProfileId === p.id) selectProfile(p.id); // refresh editor with new content
+            }
+            
         } catch (e) {
-           showToast(`重命名失败: ${e}`, 'error');
+            console.error(e);
+            showToast(`修改失败: ${e}`, 'error');
         }
     });
 }
@@ -378,6 +728,33 @@ async function exportAll() {
     }
 }
 
+async function exportCurrentProfile() {
+    let filename = 'hosts.txt';
+    if (currentProfileId === 'system') filename = 'system-hosts.txt';
+    else if (currentProfileId === 'common') filename = 'common-config.txt';
+    else {
+        const p = profileMetadata.find(x => x.id === currentProfileId);
+        if (p) filename = `${p.name}.txt`;
+        else return;
+    }
+
+    const path = await saveDialog({
+        defaultPath: filename,
+        filters: [{ name: 'Text', extensions: ['txt', 'hosts'] }]
+    });
+    
+    if (path) {
+        try {
+             // Use current editor value (what you see is what you export)
+             const content = editor.value;
+             await invoke('export_file', { path, content });
+             showToast('导出成功', 'success');
+        } catch (e) {
+             showToast(`导出失败: ${e}`, 'error');
+        }
+    }
+}
+
 // Fixed list clicks
 document.querySelectorAll('#fixed-list .profile-item').forEach(li => {
     li.onclick = () => selectProfile(li.dataset.id);
@@ -396,11 +773,14 @@ const githubLink = document.getElementById('github-link');
 
 // Event Listeners
 saveBtn.onclick = saveCurrent;
-renameBtn.onclick = renameProfile;
+renameBtn.onclick = editProfile; // renamed function
 systemEditBtn.onclick = toggleSystemEdit;
 addBtn.onclick = () => showPrompt('新建配置', '', createProfile);
 multiToggle.onchange = toggleMultiSelect;
-refreshBtn.onclick = refreshData;
+refreshBtn.onclick = (e) => {
+    e.stopPropagation();
+    refreshData();
+};
 importBtn.onclick = importData;
 importSwitchHostsBtn.onclick = importSwitchHosts;
 exportBtn.onclick = exportAll;
@@ -409,8 +789,207 @@ githubLink.onclick = () => {
     invoke('hostly_open_url', { url: 'https://github.com/zengyufei/Hostly' });
 };
 
+// Theme Logic
+// Theme Logic
+async function initTheme() {
+    try {
+        // Load from backend config
+        const config = await invoke('load_config');
+        if (config.theme) {
+            setTheme(config.theme, false);
+        } else {
+            // Fallback to local storage or default
+            const saved = localStorage.getItem('hostly-theme') || 'dark';
+            setTheme(saved, true); // Sync valid default to backend
+        }
+    } catch (e) {
+        console.error('Failed to load theme config:', e);
+        const saved = localStorage.getItem('hostly-theme') || 'dark';
+        setTheme(saved, false);
+    }
+}
+
+async function setTheme(mode, persist = true) {
+    document.documentElement.dataset.theme = mode;
+    localStorage.setItem('hostly-theme', mode);
+    
+    // Update Radios
+    const radios = document.getElementsByName('theme-mode');
+    radios.forEach(r => {
+        if (r.value === mode) r.checked = true;
+    });
+
+    if (persist) {
+        try {
+            await invoke('set_theme', { theme: mode });
+        } catch (e) {
+            console.error('Failed to save theme:', e);
+        }
+    }
+}
+
+// Settings Modal Logic
+settingsBtn.onclick = () => {
+    settingsModalOverlay.classList.remove('hidden');
+
+    
+    // Sync Window UI
+    initWindowSettings();
+};
+
+const closeSettings = () => settingsModalOverlay.classList.add('hidden');
+settingsCloseBtn.onclick = closeSettings;
+settingsModalOverlay.onclick = (e) => {
+    if (e.target === settingsModalOverlay) closeSettings();
+};
+
+document.getElementsByName('theme-mode').forEach(radio => {
+    radio.onchange = (e) => setTheme(e.target.value);
+});
+
+
+// Window Settings Logic
+let currentWindowMode = 'remember';
+let resizeTimeout;
+
+async function initWindowSettings() {
+    try {
+        const config = await invoke('load_config');
+        const mode = config.window_mode || 'remember';
+        const w = config.window_width || 1000;
+        const h = config.window_height || 700;
+        
+        applyWindowSettings(mode, w, h);
+    } catch(e) { console.error(e); }
+}
+
+function applyWindowSettings(mode, w, h) {
+    currentWindowMode = mode;
+    const select = document.getElementById('window-size-select');
+    const radios = document.getElementsByName('window-mode');
+    
+    radios.forEach(r => {
+        if (r.value === mode) r.checked = true;
+    });
+
+    if (mode === 'fixed') {
+        select.classList.remove('hidden');
+        select.value = `${w},${h}`;
+        // If not found, use custom
+        if (!select.value && w && h) {
+             const custom = select.querySelector('option[hidden]');
+             if (custom) {
+                 custom.value = `${w},${h}`;
+                 custom.innerText = `${w} x ${h}`;
+                 custom.selected = true;
+             }
+        }
+    } else {
+        select.classList.add('hidden');
+        startResizeListener();
+    }
+}
+
+function startResizeListener() {
+    window.onresize = () => {
+        if (currentWindowMode !== 'remember') return;
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            saveWindowConfig('remember', window.outerWidth, window.outerHeight);
+        }, 1000);
+    };
+}
+
+async function saveWindowConfig(mode, w, h) {
+    try {
+        // Ensure w, h are numbers
+        await invoke('save_window_config', { mode, width: parseFloat(w), height: parseFloat(h) });
+    } catch(e) { console.error(e); }
+}
+
+// Listeners
+document.getElementsByName('window-mode').forEach(r => {
+    r.onchange = (e) => {
+        const mode = e.target.value;
+        currentWindowMode = mode;
+        const select = document.getElementById('window-size-select');
+        
+        if (mode === 'fixed') {
+            select.classList.remove('hidden');
+            if (!select.value) select.selectedIndex = 0;
+            const [w, h] = select.value.split(',');
+            saveWindowConfig(mode, w, h);
+        } else {
+            select.classList.add('hidden');
+            startResizeListener();
+            saveWindowConfig(mode, window.outerWidth, window.outerHeight);
+        }
+    }
+});
+
+document.getElementById('window-size-select').onchange = (e) => {
+    const val = e.target.value;
+    const [w, h] = val.split(',');
+    saveWindowConfig('fixed', w, h);
+};
+
 // Init
 window.addEventListener('DOMContentLoaded', async () => {
+    await initTheme();
+    await initWindowSettings();
+    await initSidebarWidth();
     await loadData();
     selectProfile('system');
+    // Show window only after everything is ready to avoid flash
+    setTimeout(() => {
+        invoke('show_main_window');
+    }, 50);
 });
+
+// Sidebar Resizing
+let isResizingSidebar = false;
+
+async function initSidebarWidth() {
+    try {
+        const config = await invoke('load_config');
+        if (config.sidebar_width) {
+            applySidebarWidth(config.sidebar_width);
+        }
+    } catch(e) { console.error(e); }
+}
+
+function applySidebarWidth(w) {
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar) sidebar.style.width = w + 'px';
+}
+
+const resizer = document.getElementById('sidebar-resizer');
+const sidebarEl = document.querySelector('.sidebar');
+
+if (resizer && sidebarEl) {
+    resizer.addEventListener('mousedown', (e) => {
+        isResizingSidebar = true;
+        document.body.style.cursor = 'col-resize';
+        e.preventDefault(); 
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizingSidebar) return;
+        
+        let newWidth = e.clientX;
+        if (newWidth < 200) newWidth = 200;
+        if (newWidth > 600) newWidth = 600;
+        
+        sidebarEl.style.width = newWidth + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizingSidebar) {
+            isResizingSidebar = false;
+            document.body.style.cursor = '';
+            // Save persistence
+            const w = parseFloat(sidebarEl.style.width);
+            invoke('save_sidebar_config', { width: w }).catch(console.error);
+        }
+    });
+}

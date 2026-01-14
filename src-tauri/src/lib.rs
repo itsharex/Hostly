@@ -19,12 +19,37 @@ pub fn run() {
                 std::process::exit(0);
             }
 
+            let window = app.get_webview_window("main").unwrap();
+
             #[cfg(target_os = "windows")]
             {
-                let window = app.get_webview_window("main").unwrap();
-                // Experimental Mica
                 let _ = apply_mica(&window, Some(true));
             }
+            
+            // Apply Window Settings
+            let ctx = storage::Context::Tauri(&app.handle());
+            if let Ok(config) = storage::load_config_internal(&ctx) {
+                if let (Some(w), Some(h)) = (config.window_width, config.window_height) {
+                     let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: w, height: h }));
+                }
+            }
+            
+            // Show window after setup to prevent flashing/resizing jitter
+            // create generic show_Window to calling from frontend
+            // window.show().unwrap();
+            // window.set_focus().unwrap();
+            
+            // Background Scheduler
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Wait for app to startup
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    storage::check_auto_updates(&handle);
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -48,7 +73,19 @@ pub fn run() {
             storage::import_data,
             storage::export_data,
             storage::import_switchhosts,
+            storage::update_remote_config,
+            storage::trigger_profile_update,
+            storage::set_theme,
+            storage::save_window_config,
+            storage::save_sidebar_config,
+            show_main_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[tauri::command]
+fn show_main_window(window: tauri::Window) {
+    window.show().unwrap();
+    window.set_focus().unwrap();
 }

@@ -258,21 +258,74 @@ pub fn run_cli(app: Option<&AppHandle>) -> bool {
                 }
             }
         },
-        Some(Commands::Import { name, target, open, multi, single }) => {
-             let path = PathBuf::from(&target);
-             if !path.exists() {
-                 eprintln!("Target file '{}' not found.", target);
-                 return true;
-             }
+     Some(Commands::Import { name, target, open, multi, single }) => {
+             // Check if target is a remote URL
+             let is_remote = target.to_lowercase().starts_with("http://") || target.to_lowercase().starts_with("https://");
 
-             let content = match fs::read_to_string(&path) {
-                 Ok(c) => c,
-                 Err(e) => {
-                      eprintln!("Failed to read file: {}", e);
-                      return true;
+             if is_remote {
+                 if let Some(n) = &name {
+                     println!("Importing remote profile '{}' from '{}'...", n, target);
+                     match storage::create_profile_internal(
+                         &ctx,
+                         n.clone(),
+                         None,
+                         Some(target.clone()),
+                         Some(3600) // Default 1 hour interval
+                     ) {
+                         Ok(id) => {
+                             println!("Profile created (ID: {}). Downloading content...", id);
+                             if let Err(e) = storage::trigger_profile_update_internal(&ctx, &id) {
+                                 eprintln!("Warning: Failed to download content: {}", e);
+                             } else {
+                                 println!("Content downloaded.");
+                             }
+                         },
+                         Err(e) => {
+                             eprintln!("Failed to create remote profile: {}", e);
+                             return true;
+                         }
+                     }
+                 } else {
+                     eprintln!("Error: --name is required when importing a remote URL.");
+                     return true;
                  }
-             };
+             } else {
+                 // Existing Header (File Import)
+                 let path = PathBuf::from(&target);
+                 if !path.exists() {
+                     eprintln!("Target file '{}' not found.", target);
+                     return true;
+                 }
 
+                 let content = match fs::read_to_string(&path) {
+                     Ok(c) => c,
+                     Err(e) => {
+                          eprintln!("Failed to read file: {}", e);
+                          return true;
+                     }
+                 };
+
+                 if let Some(n) = &name {
+                      match storage::upsert_profile_internal(&ctx, n.clone(), content) {
+                           Ok(_) => println!("Imported profile '{}'.", n),
+                           Err(e) => eprintln!("Import failed: {}", e)
+                      }
+                 } else {
+                      if target.to_lowercase().ends_with(".json") {
+                          match storage::import_data_internal(&ctx, content) {
+                              Ok(_) => println!("Global backup imported from '{}'.", target),
+                              Err(e) => eprintln!("Failed to import global backup: {}", e),
+                          }
+                      } else {
+                           match storage::save_common_config_internal(&ctx, content) {
+                                Ok(_) => println!("Common config updated from '{}'.", target),
+                                Err(e) => eprintln!("Failed to save common config: {}", e)
+                           }
+                      }
+                 }
+             }
+             
+             // Common Post-Processing (Open/Multi/Single)
              let mut profiles_to_open = Vec::new();
              if let Some(args) = open {
                  if args.is_empty() {
@@ -282,25 +335,6 @@ pub fn run_cli(app: Option<&AppHandle>) -> bool {
                  } else {
                      profiles_to_open = args;
                  }
-             }
-
-             if let Some(n) = name {
-                  match storage::upsert_profile_internal(&ctx, n.clone(), content) {
-                       Ok(_) => println!("Imported profile '{}'.", n),
-                       Err(e) => eprintln!("Import failed: {}", e)
-                  }
-             } else {
-                  if target.to_lowercase().ends_with(".json") {
-                      match storage::import_data_internal(&ctx, content) {
-                          Ok(_) => println!("Global backup imported from '{}'.", target),
-                          Err(e) => eprintln!("Failed to import global backup: {}", e),
-                      }
-                  } else {
-                       match storage::save_common_config_internal(&ctx, content) {
-                            Ok(_) => println!("Common config updated from '{}'.", target),
-                            Err(e) => eprintln!("Failed to save common config: {}", e)
-                       }
-                  }
              }
 
              if profiles_to_open.len() > 1 || multi {

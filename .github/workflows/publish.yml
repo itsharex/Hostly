@@ -53,8 +53,6 @@ jobs:
             args: "--target universal-apple-darwin"
           - platform: "ubuntu-22.04"
             args: ""
-          - platform: "ubuntu-24.04-arm"
-            args: ""
           - platform: "windows-latest"
             args: ""
           - platform: "windows-latest"

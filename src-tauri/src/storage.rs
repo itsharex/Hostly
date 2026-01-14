@@ -9,11 +9,22 @@ pub struct ProfileMetadata {
     pub id: String,
     pub name: String,
     pub active: bool,
+    /// Remote URL for downloading hosts (if applicable)
+    pub url: Option<String>,
+    /// Last successful update timestamp (ISO 8601)
+    pub last_update: Option<String>,
+    /// Auto-update interval in seconds (0 or None means manual)
+    pub update_interval: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct AppConfig {
     pub multi_select: bool,
+    pub theme: Option<String>,
+    pub window_mode: Option<String>, // "fixed", "remember"
+    pub window_width: Option<f64>,
+    pub window_height: Option<f64>,
+    pub sidebar_width: Option<f64>,
     pub profiles: Vec<ProfileMetadata>,
     pub active_profile_ids: Vec<String>, // Deprecated in favor of internal active flag? Or keep synced? 
                                          // Let's keep synced or just use 'active' field in ProfileMetadata for simplicity.
@@ -105,6 +116,9 @@ pub fn load_config_internal(ctx: &Context) -> Result<AppConfig, String> {
             id: sys_id,
             name: "系统hosts备份".to_string(),
             active: false,
+            url: None,
+            last_update: None,
+            update_interval: None,
         });
 
         // 2. Default Envs
@@ -115,6 +129,9 @@ pub fn load_config_internal(ctx: &Context) -> Result<AppConfig, String> {
                  id,
                  name: name.to_string(),
                  active: false,
+                 url: None,
+                 last_update: None,
+                 update_interval: None,
              });
         }
         
@@ -168,6 +185,41 @@ pub fn save_common_config_internal(ctx: &Context, content: String) -> Result<(),
 }
 
 #[tauri::command]
+pub fn set_theme(app: AppHandle, theme: String) -> Result<(), String> {
+    set_theme_internal(&Context::Tauri(&app), theme)
+}
+
+pub fn set_theme_internal(ctx: &Context, theme: String) -> Result<(), String> {
+    let mut config = load_config_internal(ctx)?;
+    config.theme = Some(theme);
+    save_config_internal(ctx, &config)
+}
+
+#[tauri::command]
+pub fn save_window_config(app: AppHandle, mode: String, width: f64, height: f64) -> Result<(), String> {
+    save_window_config_internal(&Context::Tauri(&app), mode, width, height)
+}
+
+pub fn save_window_config_internal(ctx: &Context, mode: String, width: f64, height: f64) -> Result<(), String> {
+    let mut config = load_config_internal(ctx)?;
+    config.window_mode = Some(mode);
+    config.window_width = Some(width);
+    config.window_height = Some(height);
+    save_config_internal(ctx, &config)
+}
+
+#[tauri::command]
+pub fn save_sidebar_config(app: AppHandle, width: f64) -> Result<(), String> {
+    save_sidebar_config_internal(&Context::Tauri(&app), width)
+}
+
+pub fn save_sidebar_config_internal(ctx: &Context, width: f64) -> Result<(), String> {
+    let mut config = load_config_internal(ctx)?;
+    config.sidebar_width = Some(width);
+    save_config_internal(ctx, &config)
+}
+
+#[tauri::command]
 pub fn list_profiles(app: AppHandle) -> Result<Vec<ProfileData>, String> {
     list_profiles_internal(&Context::Tauri(&app))
 }
@@ -198,11 +250,23 @@ pub fn list_profiles_internal(ctx: &Context) -> Result<Vec<ProfileData>, String>
 }
 
 #[tauri::command]
-pub fn create_profile(app: AppHandle, name: String, content: Option<String>) -> Result<String, String> {
-    create_profile_internal(&Context::Tauri(&app), name, content)
+pub fn create_profile(
+    app: AppHandle,
+    name: String,
+    content: Option<String>,
+    url: Option<String>,
+    update_interval: Option<u64>
+) -> Result<String, String> {
+    create_profile_internal(&Context::Tauri(&app), name, content, url, update_interval)
 }
 
-pub fn create_profile_internal(ctx: &Context, name: String, content: Option<String>) -> Result<String, String> {
+pub fn create_profile_internal(
+    ctx: &Context,
+    name: String,
+    content: Option<String>,
+    url: Option<String>,
+    update_interval: Option<u64>
+) -> Result<String, String> {
     let mut config = load_config_internal(ctx)?;
     
     // Check for duplicate name
@@ -218,6 +282,9 @@ pub fn create_profile_internal(ctx: &Context, name: String, content: Option<Stri
         id: id.clone(),
         name,
         active: false,
+        url,
+        last_update: None,
+        update_interval,
     });
     
     save_config_internal(ctx, &config)?;
@@ -474,7 +541,8 @@ pub fn upsert_profile_internal(ctx: &Context, name: String, content: String) -> 
         save_profile_file_internal(ctx, &id, &content)?;
         Ok(id)
     } else {
-        create_profile_internal(ctx, name, Some(content))
+
+        create_profile_internal(ctx, name, Some(content), None, None)
     }
 }
 
@@ -571,6 +639,152 @@ fn parse_switchhosts_items_internal(ctx: &Context, items: &Vec<serde_json::Value
             *count += 1;
         }
     }
+
     Ok(())
+}
+
+pub fn check_auto_updates(app: &AppHandle) {
+    let ctx = Context::Tauri(app);
+    // Silent check, allow errors to just print to stderr
+    if let Ok(config) = load_config_internal(&ctx) {
+        let now = chrono::Local::now();
+        let mut needs_save = false;
+        
+        // Collect IDs to update to avoid borrow checker issues with iterating & mutating config
+        let mut updates_needed = Vec::new();
+
+        for p in &config.profiles {
+            if let (Some(_url), Some(interval), Some(last_update_str)) = (&p.url, p.update_interval, &p.last_update) {
+                if interval > 0 {
+                    if let Ok(last_update) = chrono::DateTime::parse_from_rfc3339(last_update_str) {
+                        let diff = now.signed_duration_since(last_update);
+                        if diff.num_seconds() >= interval as i64 {
+                            updates_needed.push(p.id.clone());
+                        }
+                    }
+                }
+            } else if let (Some(_url), Some(interval), None) = (&p.url, p.update_interval, &p.last_update) {
+                // Never updated, but has interval -> update now
+                 if interval > 0 {
+                    updates_needed.push(p.id.clone());
+                 }
+            }
+        }
+        
+        for id in updates_needed {
+            println!("Auto-updating profile {}...", id);
+            if let Err(e) = trigger_profile_update_internal(&ctx, &id) {
+                eprintln!("Failed to auto-update {}: {}", id, e);
+            }
+            // re-application is handled inside trigger_profile_update_internal? 
+            // implementation_plan said Trigger triggers re-apply. 
+            // Actually `trigger_profile_update` command does, but `internal` does NOT re-apply.
+            // We should reload config to check if active and apply if needed?
+            // checking internal implementation...
+            // `trigger_profile_update_internal` saves file and updates timestamp in config.
+            // It does NOT call apply_config.
+            // So we need to do it here if any update happened.
+            needs_save = true;
+        }
+
+        if needs_save {
+             // Re-apply config if any active profile was updated
+             // Optimization: check if any updated profile was active
+             // For now, just apply to be safe
+             let _ = apply_config_internal(&ctx);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn update_remote_config(
+    app: AppHandle,
+    id: String,
+    url: Option<String>,
+    update_interval: Option<u64>
+) -> Result<(), String> {
+    let ctx = Context::Tauri(&app);
+    let mut config = load_config_internal(&ctx)?;
+    
+    if let Some(p) = config.profiles.iter_mut().find(|p| p.id == id) {
+        p.url = url;
+        p.update_interval = update_interval;
+    } else {
+        return Err("Profile not found".to_string());
+    }
+
+    save_config_internal(&ctx, &config)
+}
+
+#[tauri::command]
+pub fn trigger_profile_update(app: AppHandle, id: String) -> Result<(), String> {
+    let ctx = Context::Tauri(&app);
+    trigger_profile_update_internal(&ctx, &id)?;
+    // If active, re-apply
+    let config = load_config_internal(&ctx)?;
+    if config.profiles.iter().any(|p| p.id == id && p.active) {
+        apply_config(app)?;
+    }
+    Ok(())
+}
+
+pub fn trigger_profile_update_internal(ctx: &Context, id: &str) -> Result<(), String> {
+    let mut config = load_config_internal(ctx)?;
+    
+    let (url, name) = if let Some(p) = config.profiles.iter().find(|p| p.id == id) {
+        (p.url.clone(), p.name.clone())
+    } else {
+        return Err("Profile not found".to_string());
+    };
+
+    let url = url.ok_or("Profile is not a remote profile (no URL)")?;
+    
+    // Download
+    println!("Downloading profile '{}' from '{}'...", name, url);
+    let content = download_text(&url)?;
+
+    // Save Content
+    save_profile_file_internal(ctx, id, &content)?;
+
+    // Update Timestamp
+    if let Some(p) = config.profiles.iter_mut().find(|p| p.id == id) {
+        p.last_update = Some(chrono::Local::now().to_rfc3339());
+    }
+    save_config_internal(ctx, &config)?;
+    
+    Ok(())
+}
+
+fn download_text(urls_str: &str) -> Result<String, String> {
+    let mut combined_content = String::new();
+    let urls: Vec<&str> = urls_str.lines().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+
+    if urls.is_empty() {
+        return Err("No valid URLs provided".to_string());
+    }
+
+    for url in urls {
+        let content = download_single_url(url)?;
+        if !combined_content.is_empty() {
+            combined_content.push_str("\n\n");
+        }
+        combined_content.push_str(&format!("# Source: {}\n", url));
+        combined_content.push_str(&content);
+    }
+
+    Ok(combined_content)
+}
+
+fn download_single_url(url: &str) -> Result<String, String> {
+    let response = minreq::get(url)
+        .with_timeout(10)
+        .send()
+        .map_err(|e| format!("Network error downloading {}: {}", url, e))?;
+        
+    if response.status_code >= 200 && response.status_code < 300 {
+        response.as_str().map(|s| s.to_string()).map_err(|e| format!("Invalid text encoding from {}: {}", url, e))
+    } else {
+        Err(format!("HTTP Error {} from {}", response.status_code, url))
+    }
 }
 
